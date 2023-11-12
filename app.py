@@ -90,13 +90,12 @@ class PetList(Resource):
 @ns_pets.route('/<int:id>')
 class PetItem(Resource):
     @ns_pets.marshal_with(pet)
-
     def get(self, id):
-        """List a pet by ID"""
+        # Retrieve a specific pet from the database
         cursor.execute("SELECT * FROM Pet WHERE ID=?", (id,))
         pet = cursor.fetchone()
         if pet:
-            return pet
+            return {'ID': pet[0], 'Nome': pet[1], 'Especie': pet[2]}
         api.abort(404, "Pet with ID {} doesn't exist".format(id))
 
     @ns_pets.expect(pet, validate=True)
@@ -111,7 +110,7 @@ class PetItem(Resource):
         cursor.execute("SELECT * FROM Pet WHERE ID=?", (id,))
         pet = cursor.fetchone()
         if pet:
-            return pet
+            return {'ID': pet[0], 'Nome': pet[1], 'Especie': pet[2]}
         api.abort(404, "Pet with ID {} doesn't exist".format(id))
 
     @ns_pets.doc(responses={204: "Pet deleted"})
@@ -127,7 +126,7 @@ class PetItem(Resource):
 class UserList(Resource):
     @ns_users.marshal_list_with(user)
     def get(self):
-        # Retrieve a list of users from the database
+        """List all USERS"""
         cursor.execute("SELECT * FROM Usuario")
         users = cursor.fetchall()
         user_list = [{'ID': user[0], 'Nome': user[1], 'Email': user[2], 'Senha': user[3]} for user in users]
@@ -137,18 +136,18 @@ class UserList(Resource):
     class PetItem(Resource):
         @ns_users.marshal_with(user)
         def get(self, id):
-            # Retrieve a specific pet from the database
+            """List USER by ID"""
             cursor.execute("SELECT * FROM Usuario WHERE ID=?", (id,))
             user = cursor.fetchone()
             if user:
-                return user
+                return {'ID': user[0], 'Nome': user[1], 'Email': user[2], 'Senha': user[3]}
             api.abort(404, "User with ID {} doesn't exist".format(id))
 
     @ns_users.expect(user, validate=True)
     @ns_users.marshal_with(user, code=201)
     def post(self):
+        """Add a new USER"""
         args = user_parser.parse_args()
-        # Insert a new user into the database
         cursor.execute("INSERT INTO Usuario (Nome, Email, Senha) VALUES (?, ?, ?)",
                        (args['Nome'], args['Email'], args['Senha']))
         conn.commit()
