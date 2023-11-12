@@ -153,6 +153,26 @@ class UserList(Resource):
         conn.commit()
         return {'Nome': args['Nome'], 'Email': args['Email'], 'Senha': args['Senha']}, 201
 
+    @ns_users.route('/<int:user_id>/associate-pet/<int:pet_id>')
+    class AssociatePet(Resource):
+        @ns_users.expect(association, validate=True)
+        @ns_users.marshal_with(association, code=201)
+        def post(self, user_id, pet_id):
+            """Associate a pet with a user"""
+            args = api.payload  # Payload contém os dados da associação enviados na solicitação
+            # Certifique-se de que o usuário e o pet existam antes de criar a associação
+            cursor.execute("SELECT * FROM Usuario WHERE ID=?", (user_id,))
+            user = cursor.fetchone()
+            cursor.execute("SELECT * FROM Pet WHERE ID=?", (pet_id,))
+            pet = cursor.fetchone()
+            if not user:
+                api.abort(404, "User with ID {} doesn't exist".format(user_id))
+            if not pet:
+                api.abort(404, "Pet with ID {} doesn't exist".format(pet_id))
+            # Insira a associação no banco de dados
+            cursor.execute("INSERT INTO PetUsuario (PetID, UsuarioID) VALUES (?, ?)", (user_id, pet_id))
+            conn.commit()
+            return {"UsuarioID": user_id, "PetID": pet_id}, 201
 
 if __name__ == "__main__":
     app.run(debug=True)
