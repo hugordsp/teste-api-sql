@@ -1,14 +1,11 @@
-from flask import Flask
+from flask import Flask, request
 from flask_restx import Api, Resource, fields, reqparse
-from werkzeug.middleware.proxy_fix import ProxyFix
 import sqlite3
-from flask_cors import CORS
-
+import jwt
+from datetime import datetime, timedelta
 
 app = Flask(__name__)
 
-CORS(app, resources={r"/api/*": {"origins": "*"}})
-app.wsgi_app = ProxyFix(app.wsgi_app)
 api = Api(
     app,
     version="1.0",
@@ -23,6 +20,82 @@ ns_pets = api.namespace("pets", description="Pet operations")
 # Database initialization
 conn = sqlite3.connect('app_pet_meet.db', check_same_thread=False)
 cursor = conn.cursor()
+
+# Define um novo parser para solicitações de login
+login_parser = reqparse.RequestParser()
+login_parser.add_argument('Email', type=str, required=True)
+login_parser.add_argument('Senha', type=str, required=True)
+
+# Define uma chave secreta para assinar tokens JWT (deve ser mantida em segredo)
+SECRET_KEY = '123456'
+
+
+def check_jwt_token():
+    global user_token
+    auth_header = request.headers.get('Authorization')
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+        if is_valid_token(token):
+            user_token = token
+
+
+# Função para verificar se o token JWT é válido
+def is_valid_token(token):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return True
+    except jwt.ExpiredSignatureError:
+        return False  # Token expirado
+    except jwt.InvalidTokenError:
+        return False  # Token inválido
+
+
+# Variável global para armazenar o token JWT após o login
+user_token = None
+
+# Função para gerar um token JWT
+
+
+def generate_token(user_id):
+    payload = {
+        'user_id': user_id,
+        'exp': datetime.utcnow() + timedelta(days=1)  # Token válido por 1 dia
+    }
+    token = jwt.encode(payload, SECRET_KEY, algorithm='HS256')
+    return token
+
+# Função para verificar e decodificar um token JWT
+
+
+def decode_token(token):
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=['HS256'])
+        return payload
+    except jwt.ExpiredSignatureError:
+        return None  # Token expirado
+    except jwt.InvalidTokenError:
+        return None  # Token inválido
+
+# Decorador personalizado para verificar a autenticação com JWT
+
+
+def jwt_auth_required(func):
+    def wrapper(*args, **kwargs):
+        token = request.headers.get('Authorization')
+
+        if not token:
+            return {'message': 'Token is missing'}, 401
+
+        token = token.split('Bearer ')[-1]
+
+        payload = decode_token(token)
+        if payload is None:
+            return {'message': 'Token is invalid or expired'}, 401
+
+        return func(payload, *args, **kwargs)
+
+    return wrapper
+
 
 # Define the parser for POST requests
 pet_parser = reqparse.RequestParser()
@@ -146,7 +219,7 @@ class PetList(Resource):
     @ns_users.expect(user, validate=True)
     @ns_users.marshal_with(user, code=201)
     def post(self):
-        """Add a new USER"""
+        """Add a new PET"""
         args = user_parser.parse_args()
         cursor.execute("INSERT INTO Usuario (Nome, Email, Senha) VALUES (?, ?, ?)",
                        (args['Nome'], args['Email'], args['Senha']))
@@ -180,12 +253,15 @@ class PetList(Resource):
         @ns_users.marshal_list_with(pet)
         def get(self, user_id):
             """List all pets associated with a user"""
-            # Primeiro, verifique se o usuário existe
-            cursor.execute("SELECT * FROM Usuario WHERE ID=?", (user_id,))
-            user = cursor.fetchone()
+            if user_token is not None:
+                cursor.execute("SELECT * FROM Usuario WHERE ID=?", (user_id,))
+                user = cursor.fetchone()
+            else:
+                return {'message': 'Access denied. Token is missing or invalid'}, 401    
             if not user:
                 api.abort(
                     404, "User with ID {} doesn't exist".format(user_id))
+            
 
             # Em seguida, recupere todos os pets associados a esse usuário
             cursor.execute(
@@ -288,6 +364,70 @@ class PetList(Resource):
                 conn.commit()
 
             return '', 204
+
+    @ns_users.route('/login')
+    class Login(Resource):
+        @ns_users.expect(login_parser, validate=True)
+        def post(self):
+            """Login with email and password"""
+            args = login_parser.parse_args()
+            user_email = args['Email']
+            user_password = args['Senha']
+
+            # Verifique se o usuário existe no banco de dados
+            cursor.execute("SELECT * FROM Usuario WHERE Email=? AND Senha=?",
+                           (user_email, user_password))
+            user = cursor.fetchone()
+
+            if user:
+                user_id = user[0]
+                # Se o usuário existe, gere um token e armazene-o na variável global
+                global user_token
+                user_token = generate_token(user_id)
+                return {'access_token': user_token, 'message': 'Login successful'}, 200
+            else:
+                # Se o usuário não existe ou as credenciais estão incorretas, retorne uma mensagem de erro
+                return {'message': 'Login failed. Check your email and password.'}, 401
+
+    @ns_users.route('/secure-data')
+    class SecureData(Resource):
+        def get(self):
+            if user_token is not None:
+                return {'message': 'You have access to secure data'}, 200
+            else:
+                return {'message': 'Access denied. Token is missing or invalid'}, 401
+
+    @ns_users.route('/')
+    class UserList(Resource):
+        @ns_users.expect(user, validate=True)
+        @ns_users.marshal_with(user, code=201)
+        def post(self):
+            """Create a new user"""
+            args = user_parser.parse_args()  # Use the existing user_parser
+            user_data = (args['Nome'], args['Email'], args['Senha'])
+
+            # Check if the user with the same email already exists
+            cursor.execute(
+                "SELECT ID FROM Usuario WHERE Email=?", (args['Email'],))
+            existing_user = cursor.fetchone()
+
+            if existing_user:
+                return {'message': 'User with the same email already exists'}, 400
+
+            # Insert the new user into the database
+            cursor.execute(
+                "INSERT INTO Usuario (Nome, Email, Senha) VALUES (?, ?, ?)", user_data)
+            conn.commit()
+
+            new_user_id = cursor.lastrowid
+            new_user = {
+                'ID': new_user_id,
+                'Nome': args['Nome'],
+                'Email': args['Email'],
+                'Senha': args['Senha']
+            }
+
+            return new_user, 201
 
 
 if __name__ == "__main__":
