@@ -149,50 +149,57 @@ class PetList(Resource):
                     for pet in pets]
         return pet_list
 
-    @ns_pets.expect(pet, validate=True)
-    @ns_pets.marshal_with(pet, code=201)
-    def post(self):
-        """Add a new PET"""
-        args = pet_parser.parse_args()
-        # Insert a new pet into the database
-        cursor.execute("INSERT INTO Pet (Nome, Especie) VALUES (?, ?)",
-                       (args['Nome'], args['Especie']))
-        conn.commit()
-        return {'Nome': args['Nome'], 'Especie': args['Especie']}, 201
+    @ns_pets.route('/add')  # Endpoint para adicionar um novo pet
+    class AddPet(Resource):
+        @ns_pets.expect(pet, validate=True)
+        @ns_pets.marshal_with(pet, code=201)
+        def post(self):
+            """Add a new pet"""
+            args = pet_parser.parse_args()
+            cursor.execute("INSERT INTO Pet (Nome, Especie) VALUES (?, ?)",
+                           (args['Nome'], args['Especie']))
+            conn.commit()
+            new_pet_id = cursor.lastrowid
+            return {'ID': new_pet_id, 'Nome': args['Nome'], 'Especie': args['Especie']}, 201
 
     @ns_pets.route('/<int:id>')
     class PetItem(Resource):
         @ns_pets.marshal_with(pet)
         def get(self, id):
-            # Retrieve a specific pet from the database
+            """Get details of a specific pet"""
             cursor.execute("SELECT * FROM Pet WHERE ID=?", (id,))
             pet = cursor.fetchone()
             if pet:
                 return {'ID': pet[0], 'Nome': pet[1], 'Especie': pet[2]}
             api.abort(404, "Pet with ID {} doesn't exist".format(id))
 
-    @ns_pets.expect(pet, validate=True)
-    @ns_pets.marshal_with(pet)
-    def put(self, id):
-        """Update PET data"""
-        args = pet_parser.parse_args()
-        # Update a specific pet in the database
-        cursor.execute("UPDATE Pet SET Nome=?, Especie=? WHERE ID=?",
-                       (args['Nome'], args['Especie'], id))
-        conn.commit()
-        cursor.execute("SELECT * FROM Pet WHERE ID=?", (id,))
-        pet = cursor.fetchone()
-        if pet:
-            return {'ID': pet[0], 'Nome': pet[1], 'Especie': pet[2]}
-        api.abort(404, "Pet with ID {} doesn't exist".format(id))
-
+        @ns_pets.expect(pet, validate=True)
+        @ns_pets.marshal_with(pet)
+        def put(self, id):
+            """Update details of a specific pet"""
+            args = pet_parser.parse_args()
+            cursor.execute("UPDATE Pet SET Nome=?, Especie=? WHERE ID=?",
+                        (args['Nome'], args['Especie'], id))
+            conn.commit()
+            cursor.execute("SELECT * FROM Pet WHERE ID=?", (id,))
+            pet = cursor.fetchone()
+            if pet:
+                return {'ID': pet[0], 'Nome': pet[1], 'Especie': pet[2]}
+            api.abort(404, "Pet with ID {} doesn't exist".format(id))
+            
+    @ns_pets.doc(params={'id': 'ID of the pet to be deleted'})
     @ns_pets.doc(responses={204: "Pet deleted"})
     def delete(self, id):
-        """Delete a PET"""
-        # Delete a specific pet from the database
-        cursor.execute("DELETE FROM Pet WHERE ID=?", (id,))
-        conn.commit()
-        return '', 204
+        """Delete a specific pet"""
+        cursor.execute("SELECT * FROM Pet WHERE ID=?", (id,))
+        pet = cursor.fetchone()
+
+        if pet:
+            cursor.execute("DELETE FROM Pet WHERE ID=?", (id,))
+            conn.commit()
+            return '', 204  # Retornar 204 se o pet foi excluído com sucesso
+        else:
+            api.abort(404, "Pet with ID {} not found".format(id))  # Se o pet não existe, retornar erro 404
 
     @ns_users.route('/')
     class UserList(Resource):
@@ -215,16 +222,6 @@ class PetList(Resource):
             if user:
                 return {'ID': user[0], 'Nome': user[1], 'Email': user[2], 'Senha': user[3]}
             api.abort(404, "User with ID {} doesn't exist".format(id))
-
-    @ns_users.expect(user, validate=True)
-    @ns_users.marshal_with(user, code=201)
-    def post(self):
-        """Add a new PET"""
-        args = user_parser.parse_args()
-        cursor.execute("INSERT INTO Usuario (Nome, Email, Senha) VALUES (?, ?, ?)",
-                       (args['Nome'], args['Email'], args['Senha']))
-        conn.commit()
-        return {'Nome': args['Nome'], 'Email': args['Email'], 'Senha': args['Senha']}, 201
 
     @ns_users.route('/<int:user_id>/associate-pet/<int:pet_id>')
     class AssociatePet(Resource):
@@ -257,11 +254,10 @@ class PetList(Resource):
                 cursor.execute("SELECT * FROM Usuario WHERE ID=?", (user_id,))
                 user = cursor.fetchone()
             else:
-                return {'message': 'Access denied. Token is missing or invalid'}, 401    
+                return {'message': 'Access denied. Token is missing or invalid'}, 401
             if not user:
                 api.abort(
                     404, "User with ID {} doesn't exist".format(user_id))
-            
 
             # Em seguida, recupere todos os pets associados a esse usuário
             cursor.execute(
